@@ -1,0 +1,746 @@
+# Trial 1 : Integrated analysis (HD+patient)
+
+## Processing
+
+```{r}
+library(Seurat)
+BiocManager::install("dittoSeq")
+BiocManager::install("harmony")
+library(dittoSeq)
+library(harmony)
+source('/home/sbm/kyungmin/Rstudio/RunHarmony_2.R')
+```
+
+```{r}
+set.seed(123)
+setwd('/home/sbm/kyungmin/HYIBB/scRNA/Data/GSE210065/Result/')
+
+CHOL_seurat_cut <- readRDS('CHOL_seurat_cut.rds') # contains protein&RNA data of HD+patient
+```
+
+```{r}
+# Retrieve only healthy and patient before treatment for initial clustering
+CHOL_HD_patient_after <- subset(CHOL_seurat_cut, subset = timepoint %in% c("HD", "T02", "T03"))
+```
+
+## Initial clustering based on Protein
+
+### Processing
+
+```{r}
+# Normalize ADT data (CLR method recommended)
+DefaultAssay(CHOL_HD_patient_after) <- "ADT"
+CHOL_HD_patient_after <- NormalizeData(CHOL_HD_patient_after, normalization.method = "CLR", margin = 2, assay = "ADT")
+CHOL_HD_patient_after <- ScaleData(CHOL_HD_patient_after, assay = "ADT")
+```
+
+### Clustering
+
+```{r}
+# Cluster directly on protein levels
+
+DefaultAssay(CHOL_HD_patient_after) <- "ADT"
+CHOL_HD_patient_after <- RunPCA(CHOL_HD_patient_after, features = rownames(CHOL_HD_patient_after), reduction.name = "pca_adt", reduction.key = "pca_adt_", verbose = FALSE)
+
+DimPlot(CHOL_HD_patient_after, reduction = "pca_adt", group.by= "patient")
+ElbowPlot(CHOL_HD_patient_after , ndims = 50)
+
+CHOL_HD_patient_after <- RunUMAP(CHOL_HD_patient_after, reduction = "pca_adt", reduction.key = "adt_umap_", reduction.name = "umap_adt" , dims = 1:15)
+CHOL_HD_patient_after <- FindNeighbors(CHOL_HD_patient_after, features = rownames(CHOL_HD_patient_after), dims = NULL)
+CHOL_HD_patient_after <- FindClusters(CHOL_HD_patient_after, resolution = 0.1, graph.name = "ADT_snn")
+
+# DimPlot(CHOL_HD_patient_B, reduction = "umap_adt")
+
+# CHOL_seurat_cut[["adt_snn"]] <- FindNeighbors(CHOL_seurat_cut, dims = 1:20)
+# CHOL_seurat_cut <- FindClusters(CHOL_seurat_cut, resolution = 0.4, graph.name = "adt_snn")
+
+DimPlot(CHOL_HD_patient_after, reduction = "umap_adt", pt.size = 0.05, label = T)
+# tmp <- subset(HD_Tcell_Naive_C0, downsample = 300)
+protein_markers_HD_patient_after <- FindAllMarkers(CHOL_HD_patient_after, assay = "ADT", , only.pos = TRUE)
+
+
+# heatmap <- DoHeatmap(CHOL_seurat_cut, features = unique(protein_markers$gene), slot="scale.data", assay="ADT", size=3) + theme(text=element_text(size=10))
+
+heatmap <- DoHeatmap(subset(CHOL_HD_patient_after, downsample = 1000), features = unique(protein_markers_HD_patient_after$gene), assay = "ADT", angle = 90) + NoLegend()
+
+RNA_markers_HD_patient_after <- FindAllMarkers(CHOL_HD_patient_after, assay = "RNA", logfc.threshold = 0.10, only.pos = TRUE, min.diff.pct = 0.2)
+
+CHOL_HD_patient_after[["ADT_res0.1.pc15"]] <- Idents(CHOL_HD_patient_after)
+```
+
+### Visualization : Check plots
+
+```{r}
+# check gene feature plot/violin plot
+
+protein_gene_name = c("CD95-FAS", "CD11a-ITGAL", "CD183-CXCR3", "CD127-IL7R", "CD62L-SELL", "CD28-CD28", "CD197-CCR7", "CD27-CD27", "CD5-CD5", "CD49d-ITGA4", "CD279-PDCD1", "CD4-CD4", "TCRab-TRA-TRB", "CD45RA-PTPRC", "CD8-CD8A", "CD3-CD3E", "CD45RO-PTPRC")
+
+
+
+Idents(CHOL_HD_patient_after) <- "ADT_res0.2.pc15"
+
+DefaultAssay(CHOL_HD_patient_after) <- "ADT"
+DimPlot(CHOL_HD_patient_after, reduction = "umap_adt", pt.size = 0.05, label = T)
+FeaturePlot(CHOL_HD_patient_after, protein_gene_name, slot = "data" , ncol =5)
+VlnPlot(CHOL_HD_patient_after, protein_gene_name, group.by = "ADT_res0.2.pc15", pt.size =0, slot = "data" , ncol = 5)
+```
+
+## Run Harmony
+
+```{r}
+CHOL_HD_patient_after <- RunHarmony.Seurat(CHOL_HD_patient_after, "patient", 
+                                               reduction.use  = "pca_adt",
+                                               reduction.save = "harmony_adt",
+                                               dims.use = 1:30)
+```
+
+```{r}
+CHOL_HD_patient_after <- RunUMAP(CHOL_HD_patient_after, reduction = "harmony_adt", reduction.key = "adt_harmony_umap_", reduction.name = "harmony_umap_adt" , dims = 1:30)
+
+
+CHOL_HD_patient_after <- FindNeighbors(CHOL_HD_patient_after, 
+                                           features = rownames(CHOL_HD_patient_after)
+                                           , dims = 1:30,
+                                           reduction = "harmony_adt",
+                                           graph.name = "ADT_harmony_snn")
+
+CHOL_HD_patient_after <- FindClusters(CHOL_HD_patient_after, 
+                                          resolution = 0.25,
+                                          graph.name = "ADT_harmony_snn")
+```
+
+### Visualization after harmony
+
+```{r}
+DimPlot(CHOL_HD_patient_after, reduction = "harmony_umap_adt")
+DimPlot(CHOL_HD_patient_after, reduction = "harmony_umap_adt", group.by = "timepoint")
+DimPlot(CHOL_HD_patient_after, reduction = "harmony_umap_adt", split.by = "timepoint")
+FeaturePlot(CHOL_HD_patient_after, features = c("nFeature_RNA", "nCount_RNA", "percent.mito", "percent.ribo", "S.Score","G2M.Score") , coord.fixed = T, ncol= 3, reduction = "harmony_umap_adt")
+DimPlot(CHOL_HD_patient_after, reduction = "harmony_umap_adt", split.by = "patient", ncol = 6)
+```
+
+```{r}
+pt <- table(CHOL_HD_patient_after$seurat_clusters, CHOL_HD_patient_after$patient)
+pt <- as.data.frame(pt)
+pt$Var1 <- as.character(pt$Var1)
+
+# pt$Var2 <- factor(pt$Var2, levels = c("HD" , "T02", "T03"))
+
+ggplot(pt, aes(x = Var2, y = Freq, fill = Var1)) +
+  theme_bw(base_size = 15) +
+  geom_col(position = "fill", width = 0.5) +
+  xlab("Sample") +
+  ylab("Proportion") +
+  #scale_fill_manual(values = brewer.pal(12, "Paired")) +
+  scale_fill_manual(values = hue_pal()(9)) +
+  theme(legend.title = element_blank())
+```
+
+```{r}
+protein_gene_name = c("CD95-FAS", "CD11a-ITGAL", "CD183-CXCR3", "CD127-IL7R", "CD62L-SELL", "CD28-CD28", "CD197-CCR7", "CD27-CD27", "CD5-CD5", "CD49d-ITGA4", "CD279-PDCD1", "CD4-CD4", "TCRab-TRA-TRB", "CD45RA-PTPRC", "CD8-CD8A", "CD3-CD3E", "CD45RO-PTPRC" , "CD123-IL3RA", "CD235a-b-GYPA-GYPB")
+
+# heatmap after harmony
+protein_markers_HD_patient_after <- FindAllMarkers(CHOL_HD_patient_after, assay = "ADT", , only.pos = TRUE)
+
+DoHeatmap(subset(CHOL_HD_patient_after, downsample = 1000), features = unique(protein_markers_HD_patient_after$gene), assay = "ADT", angle = 90) + NoLegend()
+
+cluster_marker_name <- protein_markers_HD_patient_after$gene
+
+Idents(CHOL_HD_patient_after) <- "ADT_harmony_snn_res.0.25"
+
+DefaultAssay(CHOL_HD_patient_after) <- "ADT"
+DimPlot(CHOL_HD_patient_after, reduction = "harmony_umap_adt", pt.size = 0.05, label = T)
+FeaturePlot(CHOL_HD_patient_after, protein_gene_name, slot = "data" ,reduction = "harmony_umap_adt", ncol =5)
+VlnPlot(CHOL_HD_patient_after, protein_gene_name, group.by = "ADT_harmony_snn_res.0.25", pt.size =0, slot = "data" , ncol = 5)
+
+# dittoDimPlot(CHOL_HD_patient_after, "DICE", reduction.use = "harmony_umap_adt", do.letter = FALSE, do.label=F, split.by = "DICE")
+```
+
+# Re-clustering (subset 0,3 clusters)
+
+```{r}
+Tcell_48_after <- subset(CHOL_HD_patient_after, subset = (ADT_harmony_snn_res.0.25 ==0 |  ADT_harmony_snn_res.0.25==3) )
+```
+
+## Initial clustering based on **RNA**
+
+```{r}
+DefaultAssay(Tcell_48_after) <- "RNA"
+```
+
+### Variable Feature Selection (consider batch)
+
+```{r}
+# normalize RNA count data first
+Tcell_48_after <- NormalizeData(Tcell_48_after)
+
+# find variable features per patient
+Tcell_48_after.list <- SplitObject(Tcell_48_after, split.by = "patient")
+for (i in 1:length(Tcell_48_after.list)) {
+  Tcell_48_after.list[[i]] <- FindVariableFeatures(Tcell_48_after.list[[i]], selection.method = "vst", nfeatures = 2000, verbose = TRUE)
+}
+
+# Return top scoring 2,000 features
+features_Tcell_48_after <- SelectIntegrationFeatures(Tcell_48_after.list)
+
+rm(Tcell_48_after.list)
+```
+
+### Scale data
+
+```{r}
+Tcell_48_after <- ScaleData(Tcell_48_after, features = features_Tcell_48_after, vars.to.regress = c("nCount_RNA", "S.Score", "G2M.Score"))
+```
+
+### Run PCA
+
+```{r}
+Tcell_48_after = RunPCA(Tcell_48_after, npcs = 40, verbose = TRUE , features = features_Tcell_48_after)
+
+ElbowPlot(Tcell_48_after, ndims = 40, reduction = "pca")
+VizDimLoadings(Tcell_48_after, dims = 1:4, reduction = "pca", ncol = 2)
+
+DimPlot(Tcell_48_after, reduction = "pca", na.value = "grey50" , group.by = "patient")
+DimPlot(Tcell_48_after, reduction = "pca", na.value = "grey50" , group.by = "batch")
+```
+
+### Run Umap
+
+```{r}
+Tcell_48_after <- FindNeighbors(Tcell_48_after, dims = 1:30)
+Tcell_48_after <- FindClusters(Tcell_48_after, resolution = 0.4)
+Tcell_48_after <- RunUMAP(Tcell_48_after, dims = 1:30)
+```
+
+### Visualization : Check plots
+
+```{r}
+# check plot
+
+DimPlot(Tcell_48_after, reduction = "umap", pt.size = 0.05)
+
+DimPlot(Tcell_48_after, reduction = "umap", pt.size = 0.05 , group.by = "patient")
+DimPlot(Tcell_48_after, reduction = "umap", pt.size = 0.05 , group.by = "batch")
+
+# dittoDimPlot(C0_healthy, "DICE", reduction.use = "umap", do.letter = FALSE, do.label=F, split.by = "DICE")
+
+FeaturePlot(Tcell_48_after, features = c("nFeature_RNA", "nCount_RNA", "percent.mito", "percent.ribo", "S.Score","G2M.Score") , coord.fixed = T, ncol= 3)
+```
+
+### Run Harmony
+
+```{r}
+Tcell_48_after <- RunHarmony.Seurat(Tcell_48_after, "patient", 
+                                          reduction.use  = "pca",
+                                          reduction.save = "harmony",
+                                          dims.use = 1:30)
+
+
+Tcell_48_after <- Tcell_48_after %>%
+    RunUMAP(reduction = "harmony", dims= 1:30)
+
+
+
+Tcell_48_after <- Tcell_48_after %>%
+  FindNeighbors(reduction = "harmony" , dims = 1:30) %>%
+    FindClusters(resolution = 0.2) 
+```
+
+### Visualization after harmony
+
+```{r}
+DimPlot(Tcell_48_after, reduction = "umap", pt.size = 0.05)
+
+DimPlot(Tcell_48_after, reduction = "umap", pt.size = 0.05 , group.by = "patient")
+DimPlot(Tcell_48_after, reduction = "umap", pt.size = 0.05 , group.by = "timepoint")
+
+# dittoDimPlot(C0_healthy, "DICE", reduction.use = "umap", do.letter = FALSE, do.label=F, split.by = "DICE")
+
+FeaturePlot(Tcell_48_after, features = c("nFeature_RNA", "nCount_RNA", "percent.mito", "percent.ribo", "S.Score","G2M.Score") , coord.fixed = T, ncol= 3, reduction = "umap")
+
+
+FeaturePlot(Tcell_48_after, features = c("ADGRE5", "TCF7", "BCL2", "IL7R") , coord.fixed = T, ncol= 3, reduction = "umap")
+
+VlnPlot(Tcell_48_after, c("ADGRE5", "TCF7", "BCL2", "IL7R"), group.by =  "timepoint", pt.size=0)
+
+VlnPlot(Tcell_48_after, c("ADGRE5", "TCF7", "BCL2", "IL7R"), group.by =  "seurat_clusters", pt.size=0)
+
+FeaturePlot(Tcell_48_after, features = c("IFNG", "IL13", "IL4", "IL5", "IL17A", "CXCR5", "PDCD1") , coord.fixed = T, ncol= 4, reduction = "umap")
+
+VlnPlot(Tcell_48_after, c("IFNG", "IL13", "IL4", "IL5", "IL17A", "CXCR5", "PDCD1"), group.by =  "seurat_clusters", pt.size=0, ncol=4)
+```
+
+### Marker selection
+
+```{r}
+# marker selection from naive from cancer
+Tcell_48_after_RNA_marker <- FindAllMarkers(Tcell_48_after, 
+                                           logfc.threshold = 0.1,
+                                           only.pos = TRUE,
+                                           min.pct = 0.1,
+                                           assay = "RNA")
+```
+
+```{r}
+Tcell_48_after_protein_marker <- FindAllMarkers(Tcell_48_after, 
+                                           logfc.threshold = 0.1,
+                                           only.pos = TRUE,
+                                           min.pct = 0.1,
+                                           assay = "ADT")
+```
+
+```{r}
+setwd('/home/sbm/kyungmin/HYIBB/scRNA/Data/GSE210065/Result3(after_treatment)/')
+write.csv(Tcell_48_after_RNA_marker, "Tcell_48_after_RNA_marker.csv")
+write.csv(Tcell_48_after_protein_marker, "Tcell_48_after_protein_marker.csv")
+```
+
+### Heatmap
+
+```{r}
+# heatmap
+Tcell_48_after_RNA_marker %>%  group_by(cluster) %>%  top_n(n = 10, wt = avg_log2FC) -> top10_RNA_Tcell_markers
+
+# gene hard clustering
+top_Tcell_markers <- Tcell_48_after_RNA_marker %>%
+  group_by(gene) %>%
+  top_n(n = 1, wt = avg_log2FC) %>%
+  ungroup()
+
+top_Tcell_markers %>%  group_by(cluster) %>%  top_n(n = 10, wt = avg_log2FC) -> top10_RNA_hard_Tcell_markers
+
+
+heatmap1_c <- DoHeatmap(subset(Tcell_48_after, downsample = 4000), features = top10_RNA_Tcell_markers$gene, slot="scale.data", assay="RNA", size=3) + theme(text=element_text(size=10))
+
+# hard-clustering
+heatmap2_c <- DoHeatmap(subset(Tcell_48_after, downsample = 4000), features = top10_RNA_hard_Tcell_markers$gene, slot="scale.data", assay="RNA", size=3) + theme(text=element_text(size=10))
+```
+
+### Check cluster proportion
+
+```{r}
+pt <- table(Tcell_48_after$seurat_clusters, Tcell_48_after$response)
+pt <- as.data.frame(pt)
+pt$Var1 <- as.character(pt$Var1)
+
+# pt$Var2 <- factor(pt$Var2, levels = c("T01", "HD"))
+
+ggplot(pt, aes(x = Var2, y = Freq, fill = Var1)) +
+  theme_bw(base_size = 15) +
+  geom_col(position = "fill", width = 0.5) +
+  xlab("Sample") +
+  ylab("Proportion") +
+  #scale_fill_manual(values = brewer.pal(12, "Paired")) +
+  scale_fill_manual(values = hue_pal()(length(unique(Tcell_after$seurat_clusters))) )   +
+  theme(legend.title = element_blank())
+```
+
+### Create excel sheet (cell number)
+
+```{r}
+library(Seurat)
+library(openxlsx)
+
+# create excel file
+wb <- createWorkbook()
+
+# extract metadata
+metadata_Tcell_48_after <- Tcell_48_after@meta.data
+
+# extract unique timepoint
+timepoints <- unique(metadata_Tcell_48_after$timepoint)
+
+# repeat for each timepoints
+for (tp in timepoints) {
+  # filter specific timepoint
+  data_tp <- metadata_Tcell_48_after[metadata_Tcell_48_after$timepoint == tp, ]
+  
+  # create (number of cells per cluster/patients)
+  freq_table <- table(data_tp$patient, data_tp$seurat_clusters)
+  
+  # transform into dataframe
+  df <- as.data.frame.matrix(freq_table)
+  
+  # add data to new sheet
+  addWorksheet(wb, sheetName = paste0("Timepoint_", tp))
+  writeData(wb, sheet = paste0("Timepoint_", tp), df)
+}
+
+# save excel file
+saveWorkbook(wb, "/home/sbm/kyungmin/HYIBB/scRNA/Data/GSE210065/Result3(after_treatment)/Tcell_48_after_cluster_distribution.xlsx", overwrite = TRUE)
+```
+
+# Re-clustering (cluster 1, 2)
+
+```{r}
+# subset C1 & C2
+naive_CD4_after <- subset(CHOL_HD_patient_after, subset = (ADT_harmony_snn_res.0.25 ==1 |  ADT_harmony_snn_res.0.25==2) )
+```
+
+## Clustering
+
+### HVG selection
+
+```{r}
+DefaultAssay(naive_CD4_after) <- "RNA"
+naive_CD4_after <- NormalizeData(naive_CD4_after)
+
+# find variable features per batch
+naive_CD4_after.list <- SplitObject(naive_CD4_after, split.by = "patient")
+for (i in 1:length(naive_CD4_after.list)) {
+  naive_CD4_after.list[[i]] <- FindVariableFeatures(naive_CD4_after.list[[i]], selection.method = "vst", nfeatures = 2000, verbose = TRUE)
+}
+
+# Return top scoring 2,000 features
+features_naive_after <- SelectIntegrationFeatures(naive_CD4_after.list)
+
+rm(naive_CD4_after.list)
+```
+
+### Scale data
+
+```{r}
+naive_CD4_after <- ScaleData(naive_CD4_after, 
+                           features = features_naive_after, 
+                           vars.to.regress= c("nCount_RNA", "S.Score", "G2M.Score")
+                           )
+```
+
+### Run PCA
+
+```{r}
+naive_CD4_after = RunPCA(naive_CD4_after, npcs = 40, verbose = TRUE , features = features_naive_after)
+
+ElbowPlot(naive_CD4_after, ndims = 40, reduction = "pca")
+VizDimLoadings(naive_CD4_after, dims = 1:4, reduction = "pca", ncol = 2)
+
+DimPlot(naive_CD4_after, reduction = "pca", na.value = "grey50" , group.by = "patient")
+DimPlot(naive_CD4_after, reduction = "pca", na.value = "grey50" , group.by = "batch")
+```
+
+### Run Umap
+
+```{r}
+naive_CD4_after <- FindNeighbors(naive_CD4_after, dims = 1:30)
+naive_CD4_after <- FindClusters(naive_CD4_after, resolution = 0.4)
+naive_CD4_after <- RunUMAP(naive_CD4_after, dims = 1:30)
+```
+
+### Visualization
+
+```{r}
+DimPlot(naive_CD4_after, reduction = "umap", pt.size = 0.05)
+
+DimPlot(naive_CD4_after, reduction = "umap", pt.size = 0.05 , group.by = "patient")
+DimPlot(naive_CD4_after, reduction = "umap", pt.size = 0.05 , group.by = "batch")
+
+# dittoDimPlot(naive_CD4_after, "DICE", reduction.use = "umap", do.letter = FALSE, do.label=F, split.by = "DICE")
+
+FeaturePlot(naive_CD4_after, features = c("nFeature_RNA", "nCount_RNA", "percent.mito", "percent.ribo", "S.Score","G2M.Score") , coord.fixed = T, ncol= 3)
+```
+
+## Batch correction for naive CD4+ T from cancer patients
+
+## Run Harmony
+
+```{r}
+naive_CD4_after <- RunHarmony.Seurat(naive_CD4_after, "patient", 
+                                          reduction.use  = "pca",
+                                          reduction.save = "harmony",
+                                          dims.use = 1:30)
+
+
+naive_CD4_after <- naive_CD4_after %>%
+    RunUMAP(reduction = "harmony", dims= 1:30, n.neighbors = 20, min.dist = 0.2)
+
+
+
+naive_CD4_after <- naive_CD4_after %>%
+  FindNeighbors(reduction = "harmony" , dims = 1:30) %>%
+    FindClusters(resolution = 0.2) 
+```
+
+```{r}
+# naive_CD4_umap_test <- FindNeighbors(naive_CD4, dims = 1:30)
+# naive_CD4_umap_test <- FindClusters(naive_CD4_umap_test, resolution = 0.4)
+# naive_CD4_umap_test <- RunUMAP(naive_CD4_umap_test, dims = 1:30, 
+#                                n.neighbors = 20, min.dist = 0.2)
+```
+
+### Visualization after harmony
+
+```{r}
+DimPlot(naive_CD4_after, reduction = "umap", pt.size = 0.05)
+
+DimPlot(naive_CD4_after, reduction = "umap", pt.size = 0.05 , group.by = "patient")
+DimPlot(naive_CD4_after, reduction = "umap", pt.size = 0.05 , group.by = "timepoint")
+
+# dittoDimPlot(C0_healthy, "DICE", reduction.use = "umap", do.letter = FALSE, do.label=F, split.by = "DICE")
+
+FeaturePlot(naive_CD4_after, features = c("nFeature_RNA", "nCount_RNA", "percent.mito", "percent.ribo", "S.Score","G2M.Score") , coord.fixed = T, ncol= 3, reduction = "umap")
+
+
+FeaturePlot(naive_CD4_after, features = c("ADGRE5", "TCF7", "BCL2", "IL7R") , coord.fixed = T, ncol= 3, reduction = "umap")
+
+VlnPlot(naive_CD4_after, c("ADGRE5", "TCF7", "BCL2", "IL7R"), group.by =  "timepoint", pt.size=0)
+
+VlnPlot(naive_CD4_after, c("ADGRE5", "TCF7", "BCL2", "IL7R"), group.by =  "seurat_clusters", pt.size=0)
+```
+
+### Check Proportion
+
+```{r}
+pt <- table(naive_CD4_after$seurat_clusters, naive_CD4_after$response)
+pt <- as.data.frame(pt)
+pt$Var1 <- as.character(pt$Var1)
+
+# pt$Var2 <- factor(pt$Var2, levels = c("T01", "HD"))
+
+ggplot(pt, aes(x = Var2, y = Freq, fill = Var1)) +
+  theme_bw(base_size = 15) +
+  geom_col(position = "fill", width = 0.5) +
+  xlab("Sample") +
+  ylab("Proportion") +
+  #scale_fill_manual(values = brewer.pal(12, "Paired")) +
+  scale_fill_manual(values = hue_pal()(length(unique(naive_CD4_after$seurat_clusters))) )   +
+  theme(legend.title = element_blank())
+```
+
+```{r}
+# Retrieve proportion
+
+naive_CD4_after_proportion <- as.data.frame(table(naive_CD4_after$patient, naive_CD4_after$seurat_clusters,  naive_CD4_after$timepoint))
+```
+
+### Create excel sheet (cell number)
+
+```{r}
+library(Seurat)
+library(openxlsx)
+
+# create excel file
+wb <- createWorkbook()
+
+# extract metadata
+metadata_naive_CD4 <- naive_CD4_after@meta.data
+
+# extract unique timepoint
+timepoints <- unique(metadata_naive_CD4$timepoint)
+
+# repeat for each timepoints
+for (tp in timepoints) {
+  # filter specific timepoint
+  data_tp <- metadata_naive_CD4[metadata_naive_CD4$timepoint == tp, ]
+  
+  # create (number of cells per cluster/patients)
+  freq_table <- table(data_tp$patient, data_tp$seurat_clusters)
+  
+  # transform into dataframe
+  df <- as.data.frame.matrix(freq_table)
+  
+  # add data to new sheet
+  addWorksheet(wb, sheetName = paste0("Timepoint_", tp))
+  writeData(wb, sheet = paste0("Timepoint_", tp), df)
+}
+
+# save excel file
+saveWorkbook(wb, "/home/sbm/kyungmin/HYIBB/scRNA/Data/GSE210065/Result3(after_treatment)/naive_CD4_after_cluster_distribution.xlsx", overwrite = TRUE)
+```
+
+### Marker selection
+
+```{r}
+# marker selection from naive from cancer
+naive_CD4_after_RNA_marker <- FindAllMarkers(naive_CD4_after, 
+                                           logfc.threshold = 0.1,
+                                           only.pos = TRUE,
+                                           min.pct = 0.1,
+                                           assay = "RNA")
+```
+
+### Heatmap
+
+```{r}
+# heatmap
+naive_CD4_after_RNA_marker %>%  group_by(cluster) %>%  top_n(n = 10, wt = avg_log2FC) -> top10_RNA_naive_CD4_markers
+
+# gene hard clustering
+top_naive_CD4_markers <- naive_CD4_after_RNA_marker %>%
+  group_by(gene) %>%
+  top_n(n = 1, wt = avg_log2FC) %>%
+  ungroup()
+
+top_naive_CD4_markers %>%  group_by(cluster) %>%  top_n(n = 10, wt = avg_log2FC) -> top10_RNA_hard_naive_CD4_markers
+
+
+heatmap1_c <- DoHeatmap(naive_CD4_after, features = top10_RNA_naive_CD4_markers$gene, slot="scale.data", assay="RNA", size=3) + theme(text=element_text(size=10))
+
+# hard-clustering
+heatmap2_c <- DoHeatmap(naive_CD4_after, features = top10_RNA_hard_naive_CD4_markers$gene, slot="scale.data", assay="RNA", size=3) + theme(text=element_text(size=10))
+```
+
+### Visualization of improved heatmap
+
+```{r}
+DefaultAssay(naive_CD4_after) <- "RNA"
+naive_CD4_after_FOR_HEATMAP = naive_CD4_after
+naive_CD4_after_FOR_HEATMAP <- ScaleData(naive_CD4_after_FOR_HEATMAP, 
+                           features = top_naive_CD4_markers$gene, 
+                           vars.to.regress= c("nCount_RNA"))
+```
+
+```{r}
+DoHeatmap(naive_CD4_after_FOR_HEATMAP, features = top10_RNA_hard_naive_CD4_markers$gene, slot="scale.data", assay="RNA", size=3) + theme(text=element_text(size=10))
+```
+
+# Subset cluster 3 in naive_CD4_T
+
+```{r}
+naive_CD4_after_c012 <- subset(naive_CD4_after, subset = seurat_clusters != 3 )
+```
+
+```{r}
+# normalize RNA count data first
+naive_CD4_after_c012 <- NormalizeData(naive_CD4_after_c012)
+
+# find variable features per patient
+naive_CD4_after_c012.list <- SplitObject(naive_CD4_after_c012, split.by = "patient")
+for (i in 1:length(naive_CD4_after_c012.list)) {
+  naive_CD4_after_c012.list[[i]] <- FindVariableFeatures(naive_CD4_after_c012.list[[i]], selection.method = "vst", nfeatures = 2000, verbose = TRUE)
+}
+
+# Return top scoring 2,000 features
+features_naive_CD4_after_c012 <- SelectIntegrationFeatures(naive_CD4_after_c012.list)
+
+rm(naive_CD4_after_c012.list)
+```
+
+```{r}
+naive_CD4_after_c012 <- ScaleData(naive_CD4_after_c012, 
+                           features = features_naive_CD4_after_c012, 
+                           vars.to.regress= c("nCount_RNA", "S.Score", "G2M.Score")
+                           )
+```
+
+```{r}
+naive_CD4_after_c012 = RunPCA(naive_CD4_after_c012, npcs = 40, verbose = TRUE , features = features_naive_CD4_after_c012)
+```
+
+```{r}
+naive_CD4_after_c012 <- RunHarmony.Seurat(naive_CD4_after_c012, "patient", 
+                                          reduction.use  = "pca",
+                                          reduction.save = "harmony",
+                                          dims.use = 1:30)
+
+naive_CD4_after_c012 <- naive_CD4_after_c012 %>%
+    RunUMAP(reduction = "harmony", dims= 1:30, n.neighbors = 20, min.dist = 0.2)
+
+naive_CD4_after_c012 <- naive_CD4_after_c012 %>%
+  FindNeighbors(reduction = "harmony" , dims = 1:30) %>%
+    FindClusters(resolution = 0.2)
+```
+
+```{r}
+DimPlot(naive_CD4_after_c012, reduction = "umap", pt.size = 0.05)
+
+DimPlot(naive_CD4_after_c012, reduction = "umap", pt.size = 0.05 , group.by = "patient")
+DimPlot(naive_CD4_after_c012, reduction = "umap", pt.size = 0.05 , group.by = "timepoint")
+
+# dittoDimPlot(C0_healthy, "DICE", reduction.use = "umap", do.letter = FALSE, do.label=F, split.by = "DICE")
+
+FeaturePlot(naive_CD4_after_c012, features = c("nFeature_RNA", "nCount_RNA", "percent.mito", "percent.ribo", "S.Score","G2M.Score") , coord.fixed = T, ncol= 3, reduction = "umap")
+
+
+FeaturePlot(naive_CD4_after_c012, features = c("ADGRE5", "TCF7", "BCL2", "IL7R") , coord.fixed = T, ncol= 3, reduction = "umap")
+
+VlnPlot(naive_CD4_after_c012, c("ADGRE5", "TCF7", "BCL2", "IL7R"), group.by =  "timepoint", pt.size=0)
+
+VlnPlot(naive_CD4_after_c012, c("ADGRE5", "TCF7", "BCL2", "IL7R"), group.by =  "seurat_clusters", pt.size=0)
+```
+
+### Cluster Proportion
+
+```{r}
+pt <- table(naive_CD4_after_c012$seurat_clusters, naive_CD4_after_c012$timepoint)
+pt <- as.data.frame(pt)
+pt$Var1 <- as.character(pt$Var1)
+
+# pt$Var2 <- factor(pt$Var2, levels = c("T01", "HD"))
+
+ggplot(pt, aes(x = Var2, y = Freq, fill = Var1)) +
+  theme_bw(base_size = 15) +
+  geom_col(position = "fill", width = 0.5) +
+  xlab("Sample") +
+  ylab("Proportion") +
+  #scale_fill_manual(values = brewer.pal(12, "Paired")) +
+  scale_fill_manual(values = hue_pal()(length(unique(naive_CD4_after$seurat_clusters))) )   +
+  theme(legend.title = element_blank())
+```
+
+### Marker selection
+
+```{r}
+naive_CD4_after_c012_RNA_marker <- FindAllMarkers(naive_CD4_after_c012, 
+                                           logfc.threshold = 0.1,
+                                           only.pos = TRUE,
+                                           min.pct = 0.1,
+                                           assay = "RNA")
+```
+
+```{r}
+# heatmap
+naive_CD4_after_c012_RNA_marker %>%  group_by(cluster) %>%  top_n(n = 10, wt = avg_log2FC) -> top10_RNA_naive_CD4_after_c012_markers
+
+# gene hard clustering
+top_naive_CD4_after_c012_markers <- top10_RNA_naive_CD4_after_c012_markers %>%
+  group_by(gene) %>%
+  top_n(n = 1, wt = avg_log2FC) %>%
+  ungroup()
+
+top_naive_CD4_after_c012_markers %>%  group_by(cluster) %>%  top_n(n = 10, wt = avg_log2FC) -> top10_RNA_hard_naive_CD4_after_c012_markers
+
+
+heatmap1_c <- DoHeatmap(naive_CD4_after_c012, features = top10_RNA_naive_CD4_after_c012_markers$gene, slot="scale.data", assay="RNA", size=3) + theme(text=element_text(size=10))
+
+# hard-clustering
+heatmap2_c <- DoHeatmap(naive_CD4_after_c012, features = top10_RNA_hard_naive_CD4_after_c012_markers$gene, slot="scale.data", assay="RNA", size=3) + theme(text=element_text(size=10))
+```
+
+```{r}
+DefaultAssay(naive_CD4_after_c012) <- "RNA"
+naive_CD4_after_c012_FOR_HEATMAP = naive_CD4_after_c012
+naive_CD4_after_c012_FOR_HEATMAP <- ScaleData(naive_CD4_after_c012_FOR_HEATMAP, 
+                           features = top_naive_CD4_after_c012_markers$gene, 
+                           vars.to.regress= c("nCount_RNA"))
+```
+
+```{r}
+DoHeatmap(naive_CD4_after_c012_FOR_HEATMAP, features = top10_RNA_hard_naive_CD4_after_c012_markers$gene, slot="scale.data", assay="RNA", size=3) + theme(text=element_text(size=10))
+```
+
+## Save RDS files
+
+```{r}
+# save RDS files
+setwd("/home/sbm/kyungmin/HYIBB/scRNA/Data/GSE210065/Result3(after_treatment)/")
+saveRDS(CHOL_HD_patient_after, "CHOL_HD_patient_after.rds")
+saveRDS(naive_CD4_after, "naive_CD4_after.rds")
+write.csv(naive_CD4_after_RNA_marker, "naive_CD4_RNA_marker_posttreatment.csv")
+write.csv(protein_markers_HD_patient_after, "protein_markers_HD_patient_posttreatment.csv")
+```
+
+## Proportion of other T cells
+
+```{r}
+naive_CD4_after <- readRDS("/home/sbm/kyungmin/HYIBB/scRNA/Data/GSE210065/Result3(after_treatment)/naive_CD4_after.rds")
+Naive_ortholog_final_mouse <- readRDS("/home/sbm/kyungmin/HYIBB/scRNA/Data/Annotation_ref/Label_transfer/Naive_ortholog_final_mouse.rds")
+CHOL_HD_patient_after <- readRDS("/home/sbm/kyungmin/HYIBB/scRNA/Data/GSE210065/Result3(after_treatment)/CHOL_HD_patient_after.rds")
+```
+
+```{r}
+Tcell.query <- naive_CD4_after
+Tcell.anchors <- FindTransferAnchors(reference = Naive_ortholog_final_mouse, 
+                                     query = Tcell.query, dims = 1:30, 
+                                     k.filter = 200, reference.reduction = "pca", 
+                                     scale= FALSE)
+```
